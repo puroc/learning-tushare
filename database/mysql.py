@@ -17,9 +17,10 @@ def read_data():
 
 
 def write_data(df):
-    res = df.to_sql('org_basic', engine_ts, index=False, if_exists='append', chunksize=5000)
-    print(res)
+    df.to_sql('org_basic', engine_ts, index=False, if_exists='replace', chunksize=5000)
 
+def update_data(df):
+    pass
 
 def get_data():
     pro = ts.pro_api()
