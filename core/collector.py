@@ -11,7 +11,7 @@ from threading import Thread
 import json
 
 from core.config import basic
-from database.mysql import write_data
+from database.postgresql import write_data, read_data
 
 # from urllib.request import urlopen, Request
 
@@ -47,11 +47,7 @@ class Client(object):
             else:
                 time.sleep(10)
 
-    def get_org_basic_info_by_page(self, url, date, market, page_no=1, page_count=50):
-        url = url.replace('${DATE}', date)
-        url = url.replace('${MARKET}', market)
-        url = url.replace('${PER_PAGE_COUNT}', str(page_count))
-        url = url.replace('${PAGE_NO}', str(page_no))
+    def get_data_by_page(self, url):
         self.s.headers.update(AGENT)
         param = dict(
             secondary_intent='',
@@ -91,30 +87,89 @@ class NotLoginError(Exception):
         return self.baseinfo
 
 
-def get_single_org_basic_info(url, market):
+def get_single_org_basic_info(url_format, market):
     page_no = 1
-    page_count = 50
+    page_count = 200
     df = pd.DataFrame()
     while True:
-        df_new = client.get_org_basic_info_by_page(url=url, market=market, date='2021-01-22', page_no=page_no,
-                                                   page_count=page_count)
+        url = url_format
+        url = url.replace('${DATE}', '2021-01-22')
+        url = url.replace('${MARKET}', market)
+        url = url.replace('${PAGE_COUNT}', str(page_count))
+        url = url.replace('${PAGE_NO}', str(page_no))
+        df_new = client.get_data_by_page(url)
+        if df_new is None:
+            print("机构列表，获取失败，重试：" + url)
+            continue
         if not df_new.empty:
             if not df.empty:
-                # df.merge(df_new, on='PARTICIPANTCODE')
                 df = df.append(df_new)
+                print(df_new)
             else:
                 df = df_new
             page_no += 1
         else:
+            print("机构列表，获取数据结束：" + url)
             break
-        time.sleep(1)
+        time.sleep(5)
+    return df
+
+
+def get_all_org_basic_info():
+    df_sh = get_single_org_basic_info(url_format=basic['url']['org_basic_info'], market=basic['sh']['market_code'])
+    df_sz = get_single_org_basic_info(url_format=basic['url']['org_basic_info'], market=basic['sz']['market_code'])
+    if not df_sh.empty and not df_sz.empty:
+        df = df_sh.merge(df_sz, on='PARTICIPANTCODE')
+    write_data(df, 'org_basic_info')
+
+
+def get_single_org_stock_info(url_format, org, market_sh, market_sz):
+    page_no = 1
+    page_count = 200
+    org_id = org[0]
+    org_name = org[1]
+    df = pd.DataFrame()
+    while True:
+        url = url_format
+        url = url.replace('${DATE}', '2021-01-22')
+        url = url.replace('${PARTICIPANTCODE}', org_id)
+        url = url.replace('${MARKET_SH}', market_sh)
+        url = url.replace('${MARKET_SZ}', market_sz)
+        url = url.replace('${PAGE_COUNT}', str(page_count))
+        url = url.replace('${PAGE_NO}', str(page_no))
+        print(org_name+"，机构持仓："+url)
+        df_new = client.get_data_by_page(url)
+        if df_new is None:
+            print(org_name+"机构持仓，获取失败，重试：" + url)
+            continue
+        if not df_new.empty:
+            if not df.empty:
+                df = df.append(df_new)
+                print(df_new)
+            else:
+                df = df_new
+            page_no += 1
+        else:
+            print(org_name+"机构持仓，获取数据结束：" + url)
+            break
+        time.sleep(5)
+    return df
+
+
+def get_all_org_stock_info():
+    org_list = read_data("select \"PARTICIPANTCODE\",\"PARTICIPANTNAME_x\" from org_basic_info")
+    df = pd.DataFrame()
+    for org in org_list.values:
+        df_new = get_single_org_stock_info(url_format=basic['url']['org_stock_info'], org=org,
+                                       market_sh=basic['sh']['market_code'],
+                                       market_sz=basic['sz']['market_code'])
+        if not df_new.empty:
+            df = df.append(df_new)
+    write_data(df, 'org_stock_info')
     return df
 
 
 if __name__ == '__main__':
     client = Client()
-    df_sh = get_single_org_basic_info(url=basic['url']['org_basic_info'], market=basic['sh']['market_code'])
-    df_sz = get_single_org_basic_info(url=basic['url']['org_basic_info'], market=basic['sz']['market_code'])
-    if not df_sh.empty and not df_sz.empty:
-        df = df_sh.merge(df_sz, on='PARTICIPANTCODE')
-    write_data(df)
+    # get_all_org_basic_info()
+    get_all_org_stock_info()
